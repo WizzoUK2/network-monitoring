@@ -1,0 +1,178 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Total Bandwidth (bytes/5m)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT timeslot AS time, sum(total_bytes) AS bytes FROM netmon.flows_5m WHERE timeslot >= $__fromTime AND timeslot <= $__toTime GROUP BY timeslot ORDER BY timeslot",
+          "format": 1,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Flow Count (flows/5m)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 50,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT timeslot AS time, sum(flow_count) AS flows FROM netmon.flows_5m WHERE timeslot >= $__fromTime AND timeslot <= $__toTime GROUP BY timeslot ORDER BY timeslot",
+          "format": 1,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Top 10 Talkers by Bytes (Source)",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": {
+        "defaults": { "unit": "decbytes" },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "xTickLabelRotation": 0
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT src_addr, sum(total_bytes) AS bytes FROM netmon.flows_5m WHERE timeslot >= $__fromTime AND timeslot <= $__toTime GROUP BY src_addr ORDER BY bytes DESC LIMIT 10",
+          "format": 2,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Top 10 Destinations by Bytes",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": {
+        "defaults": { "unit": "decbytes" },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "xTickLabelRotation": 0
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT dst_addr, sum(total_bytes) AS bytes FROM netmon.flows_5m WHERE timeslot >= $__fromTime AND timeslot <= $__toTime GROUP BY dst_addr ORDER BY bytes DESC LIMIT 10",
+          "format": 2,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Top Conversations (src → dst)",
+      "type": "table",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 16 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "bytes" },
+            "properties": [{ "id": "unit", "value": "decbytes" }]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT src_addr, dst_addr, dst_port, dictGetOrDefault('system.protocols', 'name', toUInt16(proto), toString(proto)) AS protocol, sum(total_bytes) AS bytes, sum(total_packets) AS packets, sum(flow_count) AS flows FROM netmon.flows_5m WHERE timeslot >= $__fromTime AND timeslot <= $__toTime GROUP BY src_addr, dst_addr, dst_port, proto ORDER BY bytes DESC LIMIT 50",
+          "format": 2,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Protocol Distribution",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 26 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        {
+          "rawSql": "SELECT multiIf(proto = 6, 'TCP', proto = 17, 'UDP', proto = 1, 'ICMP', toString(proto)) AS protocol, sum(total_bytes) AS bytes FROM netmon.flows_5m WHERE timeslot >= $__fromTime AND timeslot <= $__toTime GROUP BY proto ORDER BY bytes DESC LIMIT 10",
+          "format": 2,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Top Destination Ports",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 26 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": {
+        "defaults": { "unit": "decbytes" },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT multiIf(dst_port = 443, 'HTTPS (443)', dst_port = 80, 'HTTP (80)', dst_port = 53, 'DNS (53)', dst_port = 22, 'SSH (22)', dst_port = 123, 'NTP (123)', dst_port = 8443, 'HTTPS-alt (8443)', concat(toString(dst_port), '') ) AS port, sum(total_bytes) AS bytes FROM netmon.flows_5m WHERE timeslot >= $__fromTime AND timeslot <= $__toTime GROUP BY dst_port ORDER BY bytes DESC LIMIT 10",
+          "format": 2,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Recent Syslog Events",
+      "type": "logs",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 26 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [
+        {
+          "expr": "{source=~\".+\"} |= ``",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["network", "overview"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Network Overview",
+  "uid": "netmon-overview"
+}

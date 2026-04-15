@@ -1,0 +1,125 @@
+# Vector pipeline configuration for network monitoring
+# Sources: syslog (UDP 514), GoFlow2 JSON files
+# Sinks: Loki (logs), ClickHouse (flows)
+
+# ============================================================
+# Sources
+# ============================================================
+sources:
+  # Syslog from UniFi and other network devices
+  syslog_udp:
+    type: syslog
+    address: "0.0.0.0:514"
+    mode: udp
+
+  # GoFlow2 JSON output (NetFlow/IPFIX/sFlow records)
+  goflow2_files:
+    type: file
+    include:
+      - /var/lib/goflow2/flows.jsonl
+    read_from: beginning
+    fingerprint:
+      strategy: device_and_inode
+
+# ============================================================
+# Transforms
+# ============================================================
+transforms:
+  # Parse CEF-formatted syslog from UniFi devices
+  parse_syslog:
+    type: remap
+    inputs:
+      - syslog_udp
+    source: |
+      # Try to parse as CEF (UniFi SIEM format)
+      cef_match = match(.message, r'^CEF:')
+      if cef_match {
+        cef = parse_cef!(.message)
+        .cef_version = cef.cefVersion
+        .device_vendor = cef.deviceVendor
+        .device_product = cef.deviceProduct
+        .device_version = cef.deviceVersion
+        .device_event_class_id = cef.deviceEventClassId
+        .event_name = cef.name
+        .event_severity = cef.severity
+        # Extract common CEF extension fields
+        .src_ip = get(cef.extensions, ["src"]) ?? ""
+        .dst_ip = get(cef.extensions, ["dst"]) ?? ""
+        .src_port = get(cef.extensions, ["spt"]) ?? ""
+        .dst_port = get(cef.extensions, ["dpt"]) ?? ""
+        .protocol = get(cef.extensions, ["proto"]) ?? ""
+        .action = get(cef.extensions, ["act"]) ?? ""
+        .reason = get(cef.extensions, ["reason"]) ?? ""
+        .source_type = "unifi_cef"
+      } else {
+        .source_type = "syslog_plain"
+        .device_vendor = .hostname ?? "unknown"
+        .device_product = .appname ?? "unknown"
+        .event_severity = to_string(.severity) ?? "info"
+        .event_name = ""
+      }
+
+  # Parse GoFlow2 JSON records into structured flow data
+  parse_flows:
+    type: remap
+    inputs:
+      - goflow2_files
+    source: |
+      . = parse_json!(.message)
+      # Normalize field names for our ClickHouse schema
+      .time_received = from_unix_timestamp!(to_int!(.TimeReceived))
+      .src_addr = .SrcAddr
+      .dst_addr = .DstAddr
+      .src_port = to_int(.SrcPort) ?? 0
+      .dst_port = to_int(.DstPort) ?? 0
+      .proto = to_int(.Proto) ?? 0
+      .bytes = to_int(.Bytes) ?? 0
+      .packets = to_int(.Packets) ?? 0
+      .src_as = to_int(.SrcAS) ?? 0
+      .dst_as = to_int(.DstAS) ?? 0
+      .in_if = to_int(.InIf) ?? 0
+      .out_if = to_int(.OutIf) ?? 0
+      .etype = to_int(.Etype) ?? 0
+      .tcp_flags = to_int(.TCPFlags) ?? 0
+      .ip_tos = to_int(.IpTos) ?? 0
+      .sampling_rate = to_int(.SamplingRate) ?? 0
+      .flow_type = .Type
+
+# ============================================================
+# Sinks
+# ============================================================
+sinks:
+  # Syslog data → Loki
+  loki_syslog:
+    type: loki
+    inputs:
+      - parse_syslog
+    endpoint: "http://loki:3100"
+    labels:
+      source: "{{ source_type }}"
+      vendor: "{{ device_vendor }}"
+      product: "{{ device_product }}"
+      severity: "{{ event_severity }}"
+    encoding:
+      codec: json
+    # Remove internal Vector fields from the payload
+    remove_label_fields: true
+
+  # Flow data → ClickHouse via HTTP interface
+  clickhouse_flows:
+    type: http
+    inputs:
+      - parse_flows
+    uri: "http://clickhouse:8123/?query=INSERT+INTO+netmon.flows+FORMAT+JSONEachRow"
+    method: post
+    encoding:
+      codec: json
+    auth:
+      strategy: basic
+      user: "${CLICKHOUSE_USER:-netmon}"
+      password: "${CLICKHOUSE_PASSWORD:-changeme}"
+    batch:
+      max_bytes: 1048576
+      timeout_secs: 5
+    request:
+      retry_max_duration_secs: 30

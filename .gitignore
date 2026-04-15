@@ -1,0 +1,29 @@
+# Environment (contains secrets)
+.env
+
+# Docker volumes / persistent data
+data/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Python (Phase 2+)
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+dist/
+build/
+
+# GeoIP databases
+*.mmdb
+
+# Test/build caches
+.pytest_cache/
+.ruff_cache/

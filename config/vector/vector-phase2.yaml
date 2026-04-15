@@ -1,0 +1,121 @@
+# Vector Phase 2: Zeek log ingestion
+# Reads Zeek JSON logs and routes to ClickHouse
+
+sources:
+  # Zeek connection logs
+  zeek_conn_logs:
+    type: file
+    include:
+      - /var/lib/zeek-logs/conn*.log
+    read_from: beginning
+    fingerprint:
+      strategy: device_and_inode
+
+  # Zeek DNS logs
+  zeek_dns_logs:
+    type: file
+    include:
+      - /var/lib/zeek-logs/dns*.log
+    read_from: beginning
+    fingerprint:
+      strategy: device_and_inode
+
+transforms:
+  # Parse Zeek conn.log JSON → ClickHouse schema
+  parse_zeek_conn:
+    type: remap
+    inputs:
+      - zeek_conn_logs
+    source: |
+      parsed = parse_json!(.message)
+      # Skip Zeek header lines
+      if is_null(parsed.ts) { abort }
+      .ts = parsed.ts
+      .uid = parsed.uid ?? ""
+      .src_addr = parsed."id.orig_h" ?? ""
+      .src_port = to_int(parsed."id.orig_p") ?? 0
+      .dst_addr = parsed."id.resp_h" ?? ""
+      .dst_port = to_int(parsed."id.resp_p") ?? 0
+      .proto = parsed.proto ?? ""
+      .service = parsed.service ?? ""
+      .duration = to_float(parsed.duration) ?? 0.0
+      .orig_bytes = to_int(parsed.orig_bytes) ?? 0
+      .resp_bytes = to_int(parsed.resp_bytes) ?? 0
+      .conn_state = parsed.conn_state ?? ""
+      .missed_bytes = to_int(parsed.missed_bytes) ?? 0
+      .history = parsed.history ?? ""
+      .orig_pkts = to_int(parsed.orig_pkts) ?? 0
+      .resp_pkts = to_int(parsed.resp_pkts) ?? 0
+
+  # Parse Zeek dns.log JSON → ClickHouse schema
+  parse_zeek_dns:
+    type: remap
+    inputs:
+      - zeek_dns_logs
+    source: |
+      parsed = parse_json!(.message)
+      if is_null(parsed.ts) { abort }
+      .ts = parsed.ts
+      .uid = parsed.uid ?? ""
+      .src_addr = parsed."id.orig_h" ?? ""
+      .src_port = to_int(parsed."id.orig_p") ?? 0
+      .dst_addr = parsed."id.resp_h" ?? ""
+      .dst_port = to_int(parsed."id.resp_p") ?? 0
+      .proto = parsed.proto ?? ""
+      .query = parsed.query ?? ""
+      .qclass_name = parsed.qclass_name ?? ""
+      .qtype_name = parsed.qtype_name ?? ""
+      .rcode_name = parsed.rcode_name ?? ""
+      answers = parsed.answers ?? []
+      .answers = if is_array(answers) { join!(answers, separator: ",") } else { to_string(answers) ?? "" }
+      ttls = parsed.TTLs ?? []
+      .ttl = if is_array(ttls) { join!(ttls, separator: ",") } else { to_string(ttls) ?? "" }
+      .rejected = if parsed.rejected ?? false { 1 } else { 0 }
+
+sinks:
+  # Zeek conn logs → ClickHouse
+  clickhouse_zeek_conn:
+    type: http
+    inputs:
+      - parse_zeek_conn
+    uri: "http://clickhouse:8123/?query=INSERT+INTO+netmon.zeek_conn+FORMAT+JSONEachRow"
+    method: post
+    encoding:
+      codec: json
+    auth:
+      strategy: basic
+      user: "${CLICKHOUSE_USER:-netmon}"
+      password: "${CLICKHOUSE_PASSWORD:-changeme}"
+    batch:
+      max_bytes: 1048576
+      timeout_secs: 5
+
+  # Zeek DNS logs → ClickHouse
+  clickhouse_zeek_dns:
+    type: http
+    inputs:
+      - parse_zeek_dns
+    uri: "http://clickhouse:8123/?query=INSERT+INTO+netmon.zeek_dns+FORMAT+JSONEachRow"
+    method: post
+    encoding:
+      codec: json
+    auth:
+      strategy: basic
+      user: "${CLICKHOUSE_USER:-netmon}"
+      password: "${CLICKHOUSE_PASSWORD:-changeme}"
+    batch:
+      max_bytes: 1048576
+      timeout_secs: 5
+
+  # Also send Zeek logs to Loki for searchability
+  loki_zeek:
+    type: loki
+    inputs:
+      - parse_zeek_conn
+      - parse_zeek_dns
+    endpoint: "http://loki:3100"
+    labels:
+      source: "zeek"
+      log_type: "{{ proto }}"
+    encoding:
+      codec: json

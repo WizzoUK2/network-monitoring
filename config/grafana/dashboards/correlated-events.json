@@ -1,0 +1,142 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "title": "Events by Severity (24h)",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 8, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 20 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT multiIf(severity >= 8, 'Critical', severity >= 5, 'Warning', 'Info') AS level, count() AS count FROM netmon.correlated_events WHERE timestamp >= now() - INTERVAL 24 HOUR GROUP BY level",
+          "format": 2,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Event Rate Over Time",
+      "type": "timeseries",
+      "gridPos": { "h": 5, "w": 16, "x": 8, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "bars", "fillOpacity": 60, "stacking": { "mode": "normal" } }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT toStartOfFiveMinutes(timestamp) AS time, rule_name, count() AS events FROM netmon.correlated_events WHERE timestamp >= $__fromTime AND timestamp <= $__toTime GROUP BY time, rule_name ORDER BY time",
+          "format": 1,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Events by Rule",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 10, "x": 0, "y": 5 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "options": { "orientation": "horizontal" },
+      "targets": [
+        {
+          "rawSql": "SELECT rule_name, count() AS events FROM netmon.correlated_events WHERE timestamp >= $__fromTime AND timestamp <= $__toTime GROUP BY rule_name ORDER BY events DESC",
+          "format": 2,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Top Affected IPs",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 7, "x": 10, "y": 5 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "options": { "orientation": "horizontal" },
+      "targets": [
+        {
+          "rawSql": "SELECT source_ips AS ip, count() AS events FROM netmon.correlated_events WHERE timestamp >= $__fromTime AND timestamp <= $__toTime AND source_ips != '' GROUP BY source_ips ORDER BY events DESC LIMIT 15",
+          "format": 2,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Severity Distribution",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 7, "x": 17, "y": 5 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        {
+          "rawSql": "SELECT multiIf(severity >= 8, 'Critical (8-10)', severity >= 5, 'Warning (5-7)', 'Info (1-4)') AS level, count() AS count FROM netmon.correlated_events WHERE timestamp >= $__fromTime AND timestamp <= $__toTime GROUP BY level",
+          "format": 2,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Recent Events (Detail)",
+      "type": "table",
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 13 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "severity" },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "yellow", "value": 4 },
+                    { "color": "orange", "value": 6 },
+                    { "color": "red", "value": 8 }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT timestamp, rule_name, severity, description, source_ips, details FROM netmon.correlated_events WHERE timestamp >= $__fromTime AND timestamp <= $__toTime ORDER BY timestamp DESC LIMIT 100",
+          "format": 2,
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": ["network", "events", "alerts"],
+  "templating": { "list": [] },
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Correlated Events & Alerts",
+  "uid": "netmon-events"
+}

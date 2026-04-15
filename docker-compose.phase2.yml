@@ -1,0 +1,84 @@
+# Phase 2 overlay: Zeek (PCAP analysis) + Analyzer (UniFi API, enrichment, correlation)
+# Usage: docker compose -f docker-compose.yml -f docker-compose.phase2.yml up -d
+
+services:
+  # ============================================================
+  # PCAP Protocol Analysis - Zeek
+  # Extracts protocol metadata (conn, dns, http, ssl logs)
+  # Watches /data/pcaps for new capture files
+  # ============================================================
+  zeek:
+    image: zeek/zeek:latest
+    container_name: netmon-zeek
+    restart: unless-stopped
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        mkdir -p /zeek-logs
+        echo "Zeek watcher started. Monitoring /pcaps for new .pcap files..."
+        # Process any existing pcap files on startup
+        for f in /pcaps/*.pcap /pcaps/*.pcapng; do
+          [ -f "$$f" ] || continue
+          echo "Processing existing: $$f"
+          cd /zeek-logs && zeek -r "$$f" LogAscii::use_json=T 2>&1 || true
+        done
+        # Watch for new pcap files via inotifywait or polling
+        while true; do
+          for f in /pcaps/*.pcap /pcaps/*.pcapng; do
+            [ -f "$$f" ] || continue
+            MARKER="/zeek-logs/.processed_$$(basename $$f)"
+            if [ ! -f "$$MARKER" ]; then
+              echo "Processing new: $$f"
+              cd /zeek-logs && zeek -r "$$f" LogAscii::use_json=T 2>&1 || true
+              touch "$$MARKER"
+            fi
+          done
+          sleep 10
+        done
+    volumes:
+      - ${PWD}/data/pcaps:/pcaps:ro
+      - zeek-logs:/zeek-logs
+    networks:
+      - netmon
+
+  # ============================================================
+  # Custom Analyzer Service
+  # UniFi API integration, data enrichment, event correlation
+  # ============================================================
+  analyzer:
+    build:
+      context: ./analyzer
+      dockerfile: Dockerfile
+    container_name: netmon-analyzer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "9000"
+      LOKI_URL: http://loki:3100
+      ZEEK_LOG_DIR: /zeek-logs
+    volumes:
+      - zeek-logs:/zeek-logs:ro
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      loki:
+        condition: service_started
+    networks:
+      - netmon
+
+  # Extend Vector to also ingest Zeek JSON logs
+  vector:
+    volumes:
+      - ./config/vector/vector.yaml:/etc/vector/vector.yaml:ro
+      - goflow2-data:/var/lib/goflow2:ro
+      - zeek-logs:/var/lib/zeek-logs:ro
+      - ./config/vector/vector-phase2.yaml:/etc/vector/vector-phase2.yaml:ro
+    command: ["--config", "/etc/vector/vector.yaml", "--config", "/etc/vector/vector-phase2.yaml"]
+
+volumes:
+  zeek-logs:

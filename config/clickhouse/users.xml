@@ -1,0 +1,13 @@
+<clickhouse>
+    <users>
+        <netmon>
+            <password_sha256_hex replace="true"></password_sha256_hex>
+            <access_management>1</access_management>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            <profile>default</profile>
+            <quota>default</quota>
+        </netmon>
+    </users>
+</clickhouse>

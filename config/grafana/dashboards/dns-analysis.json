@@ -1,0 +1,131 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "title": "DNS Query Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 16, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "bars", "fillOpacity": 40 }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT toStartOfMinute(ts) AS time, count() AS queries, countIf(rcode_name != 'NOERROR' AND rcode_name != '') AS failures FROM netmon.zeek_dns WHERE ts >= $__fromTime AND ts <= $__toTime GROUP BY time ORDER BY time",
+          "format": 1,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "DNS Success Rate",
+      "type": "gauge",
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.9 },
+              { "color": "green", "value": 0.95 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT countIf(rcode_name = 'NOERROR' OR rcode_name = '') / count() AS success_rate FROM netmon.zeek_dns WHERE ts >= now() - INTERVAL 1 HOUR",
+          "format": 2,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Top Queried Domains",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "options": { "orientation": "horizontal" },
+      "targets": [
+        {
+          "rawSql": "SELECT query AS domain, count() AS queries FROM netmon.zeek_dns WHERE ts >= $__fromTime AND ts <= $__toTime AND query != '' GROUP BY query ORDER BY queries DESC LIMIT 20",
+          "format": 2,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "DNS Failure Codes",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 7 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        {
+          "rawSql": "SELECT rcode_name, count() AS count FROM netmon.zeek_dns WHERE ts >= $__fromTime AND ts <= $__toTime AND rcode_name != 'NOERROR' AND rcode_name != '' GROUP BY rcode_name ORDER BY count DESC",
+          "format": 2,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "DNS Servers Used",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 7 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "options": { "orientation": "horizontal" },
+      "targets": [
+        {
+          "rawSql": "SELECT dst_addr AS dns_server, count() AS queries FROM netmon.zeek_dns WHERE ts >= $__fromTime AND ts <= $__toTime GROUP BY dst_addr ORDER BY queries DESC LIMIT 10",
+          "format": 2,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Top Clients by DNS Queries",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        {
+          "rawSql": "SELECT src_addr, count() AS total_queries, countIf(rcode_name != 'NOERROR' AND rcode_name != '') AS failures, round(failures / total_queries * 100, 1) AS failure_pct, uniq(query) AS unique_domains FROM netmon.zeek_dns WHERE ts >= $__fromTime AND ts <= $__toTime GROUP BY src_addr ORDER BY total_queries DESC LIMIT 20",
+          "format": 2,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Failed DNS Queries (NXDOMAIN, SERVFAIL, etc.)",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        {
+          "rawSql": "SELECT ts AS time, src_addr, query, rcode_name, dst_addr AS dns_server FROM netmon.zeek_dns WHERE ts >= $__fromTime AND ts <= $__toTime AND rcode_name != 'NOERROR' AND rcode_name != '' ORDER BY ts DESC LIMIT 50",
+          "format": 2,
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": ["network", "dns"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "DNS Analysis",
+  "uid": "netmon-dns"
+}

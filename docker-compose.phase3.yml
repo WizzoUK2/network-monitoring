@@ -1,0 +1,111 @@
+# Phase 3 overlay: InfluxDB (metrics) + ntopng (real-time) + Alertmanager (alerting)
+# Usage: docker compose -f docker-compose.yml -f docker-compose.phase2.yml -f docker-compose.phase3.yml up -d
+
+services:
+  # ============================================================
+  # High-Resolution Metrics - InfluxDB
+  # Per-second bandwidth, packet, and error metrics
+  # ============================================================
+  influxdb:
+    image: influxdb:2
+    container_name: netmon-influxdb
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUXDB_USER:-netmon}
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_PASSWORD:-changeme123}
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUXDB_ORG:-netmon}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUXDB_BUCKET:-network}
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_TOKEN:-netmon-influx-token}
+      DOCKER_INFLUXDB_INIT_RETENTION: 7d
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - netmon
+
+  # ============================================================
+  # Real-Time Traffic Visibility - ntopng
+  # Live network topology, active flows, application detection
+  # ============================================================
+  ntopng:
+    image: ntop/ntopng:stable
+    container_name: netmon-ntopng
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    command:
+      - --community
+      - -i=tcp://goflow2-zmq:5556c
+      - --disable-login=1
+      - --dns.mode=3
+      - --data-dir=/var/lib/ntopng
+    volumes:
+      - ntopng-data:/var/lib/ntopng
+    depends_on:
+      - goflow2
+    networks:
+      - netmon
+
+  # ============================================================
+  # Alert Routing and Deduplication - Alertmanager
+  # Receives alerts from analyzer, routes to webhooks/email
+  # ============================================================
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: netmon-alertmanager
+    restart: unless-stopped
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./config/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    networks:
+      - netmon
+
+  # Extend analyzer with Phase 3 alerting config
+  analyzer:
+    environment:
+      ALERTMANAGER_URL: http://alertmanager:9093
+      INFLUXDB_URL: http://influxdb:8086
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-netmon-influx-token}
+      INFLUXDB_ORG: ${INFLUXDB_ORG:-netmon}
+      INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-network}
+      ANOMALY_DETECTION_ENABLED: "true"
+    depends_on:
+      alertmanager:
+        condition: service_started
+      influxdb:
+        condition: service_healthy
+
+  # Extend Grafana with InfluxDB datasource
+  grafana:
+    environment:
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource,yesoreyeram-infinity-datasource
+
+  # Extend Vector with InfluxDB metrics sink
+  vector:
+    volumes:
+      - ./config/vector/vector.yaml:/etc/vector/vector.yaml:ro
+      - ./config/vector/vector-phase2.yaml:/etc/vector/vector-phase2.yaml:ro
+      - ./config/vector/vector-phase3.yaml:/etc/vector/vector-phase3.yaml:ro
+      - goflow2-data:/var/lib/goflow2:ro
+      - zeek-logs:/var/lib/zeek-logs:ro
+    command: ["--config", "/etc/vector/vector.yaml", "--config", "/etc/vector/vector-phase2.yaml", "--config", "/etc/vector/vector-phase3.yaml"]
+    depends_on:
+      influxdb:
+        condition: service_healthy
+
+volumes:
+  influxdb-data:
+  ntopng-data:
+  alertmanager-data:

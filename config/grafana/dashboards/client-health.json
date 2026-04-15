@@ -1,0 +1,150 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "title": "Active Clients Over Time",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "lineWidth": 2 }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT timestamp AS time, uniq(mac) AS clients FROM netmon.unifi_clients WHERE timestamp >= $__fromTime AND timestamp <= $__toTime GROUP BY timestamp ORDER BY timestamp",
+          "format": 1,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "WiFi vs Wired Clients",
+      "type": "piechart",
+      "gridPos": { "h": 7, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        {
+          "rawSql": "SELECT if(is_wired = 1, 'Wired', 'WiFi') AS type, uniq(mac) AS count FROM netmon.unifi_clients WHERE timestamp >= now() - INTERVAL 10 MINUTE GROUP BY is_wired",
+          "format": 2,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Average WiFi Experience Score",
+      "type": "gauge",
+      "gridPos": { "h": 7, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 50 },
+              { "color": "yellow", "value": 70 },
+              { "color": "green", "value": 85 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT avg(experience) AS score FROM netmon.unifi_clients WHERE timestamp >= now() - INTERVAL 10 MINUTE AND is_wired = 0 AND experience > 0",
+          "format": 2,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "WiFi Signal Strength Distribution",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dBm",
+          "custom": { "drawStyle": "line", "fillOpacity": 10 }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT timestamp AS time, avg(signal) AS avg_signal, min(signal) AS min_signal, max(signal) AS max_signal FROM netmon.unifi_clients WHERE timestamp >= $__fromTime AND timestamp <= $__toTime AND is_wired = 0 AND signal < 0 GROUP BY timestamp ORDER BY timestamp",
+          "format": 1,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Clients with Poor Signal (< -75 dBm)",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        {
+          "rawSql": "SELECT name, hostname, ip, mac, avg(signal) AS avg_signal, min(signal) AS worst_signal, any(ap_mac) AS connected_ap, count() AS samples FROM netmon.unifi_clients WHERE timestamp >= now() - INTERVAL 1 HOUR AND is_wired = 0 AND signal < -75 GROUP BY name, hostname, ip, mac ORDER BY avg_signal ASC LIMIT 20",
+          "format": 2,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "avg_signal" }, "properties": [{ "id": "unit", "value": "dBm" }] },
+          { "matcher": { "id": "byName", "options": "worst_signal" }, "properties": [{ "id": "unit", "value": "dBm" }] }
+        ]
+      }
+    },
+    {
+      "title": "All Active Clients",
+      "type": "table",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 15 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        {
+          "rawSql": "SELECT name, hostname, ip, mac, network, if(is_wired = 1, 'Wired', 'WiFi') AS connection, signal, channel, experience, formatReadableSize(tx_bytes) AS tx, formatReadableSize(rx_bytes) AS rx, formatReadableTimeDelta(uptime) AS uptime FROM netmon.unifi_clients WHERE timestamp = (SELECT max(timestamp) FROM netmon.unifi_clients) ORDER BY name, hostname",
+          "format": 2,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "signal" }, "properties": [{ "id": "unit", "value": "dBm" }] }
+        ]
+      }
+    },
+    {
+      "title": "Device Infrastructure Status",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 25 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        {
+          "rawSql": "SELECT name, model, type, ip, version, if(state = 1, 'Online', 'Offline') AS status, round(cpu_usage, 1) AS cpu_pct, round(mem_usage, 1) AS mem_pct, num_clients, formatReadableSize(tx_bytes) AS tx, formatReadableSize(rx_bytes) AS rx, formatReadableTimeDelta(uptime) AS uptime FROM netmon.unifi_devices WHERE timestamp = (SELECT max(timestamp) FROM netmon.unifi_devices) ORDER BY type, name",
+          "format": 2,
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["network", "clients", "unifi"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Client Health & Devices",
+  "uid": "netmon-clients"
+}

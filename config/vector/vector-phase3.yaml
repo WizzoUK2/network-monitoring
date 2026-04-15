@@ -1,0 +1,57 @@
+# Vector Phase 3: InfluxDB metrics sink
+# Sends flow rate and bandwidth metrics to InfluxDB for high-res dashboards
+
+transforms:
+  # Compute per-flow metrics for InfluxDB
+  flow_metrics:
+    type: remap
+    inputs:
+      - parse_flows
+    source: |
+      .measurement = "flow_metrics"
+      .tags = {
+        "src_addr": .src_addr,
+        "dst_addr": .dst_addr,
+        "proto": to_string(.proto) ?? "0"
+      }
+      .fields = {
+        "bytes": to_float(.bytes) ?? 0.0,
+        "packets": to_float(.packets) ?? 0.0
+      }
+
+  # Compute per-syslog-event metrics
+  syslog_metrics:
+    type: remap
+    inputs:
+      - parse_syslog
+    source: |
+      .measurement = "syslog_events"
+      .tags = {
+        "source_type": .source_type,
+        "vendor": .device_vendor,
+        "severity": .event_severity
+      }
+      .fields = {
+        "count": 1.0
+      }
+
+sinks:
+  # Flow metrics → InfluxDB (high-resolution, 5s granularity in Grafana)
+  influxdb_flows:
+    type: influxdb_metrics
+    inputs:
+      - flow_metrics
+    endpoint: "http://influxdb:8086"
+    org: "${INFLUXDB_ORG:-netmon}"
+    bucket: "${INFLUXDB_BUCKET:-network}"
+    token: "${INFLUXDB_TOKEN:-netmon-influx-token}"
+
+  # Syslog event rate → InfluxDB
+  influxdb_syslog:
+    type: influxdb_metrics
+    inputs:
+      - syslog_metrics
+    endpoint: "http://influxdb:8086"
+    org: "${INFLUXDB_ORG:-netmon}"
+    bucket: "${INFLUXDB_BUCKET:-network}"
+    token: "${INFLUXDB_TOKEN:-netmon-influx-token}"

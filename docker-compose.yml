@@ -1,0 +1,123 @@
+services:
+  # ============================================================
+  # Syslog Collection - Vector
+  # Listens for syslog (UDP 514), parses CEF, routes to Loki
+  # Also ingests GoFlow2 JSON output and routes to ClickHouse
+  # ============================================================
+  vector:
+    image: timberio/vector:latest-alpine
+    container_name: netmon-vector
+    restart: unless-stopped
+    ports:
+      - "${SYSLOG_PORT:-514}:514/udp"
+      - "8686:8686"  # Vector API / health endpoint
+    volumes:
+      - ./config/vector/vector.yaml:/etc/vector/vector.yaml:ro
+      - goflow2-data:/var/lib/goflow2:ro
+    depends_on:
+      loki:
+        condition: service_started
+      clickhouse:
+        condition: service_healthy
+    networks:
+      - netmon
+
+  # ============================================================
+  # NetFlow/IPFIX Collection - GoFlow2
+  # Receives NetFlow v5/v9/IPFIX on UDP 2055, writes JSON files
+  # ============================================================
+  goflow2:
+    image: netsampler/goflow2:latest
+    container_name: netmon-goflow2
+    restart: unless-stopped
+    ports:
+      - "${NETFLOW_PORT:-2055}:2055/udp"
+      - "6343:6343/udp"  # sFlow
+    command: >
+      -transport=file
+      -transport.file=/var/lib/goflow2/flows.jsonl
+      -format=json
+    volumes:
+      - goflow2-data:/var/lib/goflow2
+    networks:
+      - netmon
+
+  # ============================================================
+  # Flow & Structured Data Storage - ClickHouse
+  # Analytical database for NetFlow, Zeek metadata, device data
+  # ============================================================
+  clickhouse:
+    image: clickhouse/clickhouse-server:24
+    container_name: netmon-clickhouse
+    restart: unless-stopped
+    ports:
+      - "8123:8123"  # HTTP interface
+      - "9000:9000"  # Native TCP interface
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-netmon}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-changeme}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-netmon}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./config/clickhouse/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+      - ./config/clickhouse/users.xml:/etc/clickhouse-server/users.d/netmon.xml:ro
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - netmon
+
+  # ============================================================
+  # Log Storage - Loki
+  # Label-indexed log aggregation for syslog data
+  # ============================================================
+  loki:
+    image: grafana/loki:3.0.0
+    container_name: netmon-loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./config/loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - netmon
+
+  # ============================================================
+  # Visualization - Grafana
+  # Unified dashboards across Loki, ClickHouse, and InfluxDB
+  # ============================================================
+  grafana:
+    image: grafana/grafana-oss:11.0.0
+    container_name: netmon-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-changeme}
+      GF_INSTALL_PLUGINS: ${GF_INSTALL_PLUGINS:-grafana-clickhouse-datasource}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - loki
+      - clickhouse
+    networks:
+      - netmon
+
+networks:
+  netmon:
+    driver: bridge
+
+volumes:
+  clickhouse-data:
+  loki-data:
+  grafana-data:
+  goflow2-data:
