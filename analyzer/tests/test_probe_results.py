@@ -1,5 +1,6 @@
 """Tests for the POST /api/probe-results ingest endpoint (network-probe Phase 3)."""
 
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import FastAPI
@@ -21,12 +22,23 @@ PAYLOAD = {
 }
 
 
+class FakeQueryResult:
+    def __init__(self, rows: list[Any]) -> None:
+        self.result_rows = rows
+
+
 class FakeClickHouse:
-    def __init__(self) -> None:
+    def __init__(self, query_rows: list[Any] | None = None) -> None:
         self.inserts: list[tuple[str, list[Any], list[str]]] = []
+        self.queries: list[tuple[str, dict[str, Any]]] = []
+        self._query_rows = query_rows or []
 
     def insert(self, table: str, data: list[Any], column_names: list[str]) -> None:
         self.inserts.append((table, data, column_names))
+
+    def query(self, sql: str, parameters: dict[str, Any] | None = None) -> FakeQueryResult:
+        self.queries.append((sql, parameters or {}))
+        return FakeQueryResult(self._query_rows)
 
 
 def _client(token: str) -> tuple[TestClient, FastAPI]:
@@ -72,3 +84,40 @@ def test_stores_row_and_flattens_result() -> None:
     assert row[cols.index("ok")] == 1
     assert row[cols.index("vlan")] == 40
     assert row[cols.index("test_type")] == "http_get"
+
+
+def test_get_probe_results_returns_rows_with_filters() -> None:
+    settings.probe_ingest_token = ""
+    app = FastAPI()
+    app.include_router(router)
+    app.state.clickhouse = FakeClickHouse(
+        query_rows=[
+            (
+                datetime(2026, 6, 16, 12, 0, tzinfo=timezone.utc),
+                "netprobe-01",
+                40,
+                "guest",
+                "whoami",
+                "egress",
+                120,
+                1,
+                "",
+                '{"egress_ip": "81.2.3.4"}',
+            )
+        ]
+    )
+    client = TestClient(app)
+
+    r = client.get("/api/probe-results", params={"vlan": 40, "test_type": "whoami", "hours": 6})
+    assert r.status_code == 200  # read endpoint is unauthenticated, like other GETs
+    body = r.json()
+    assert body["count"] == 1
+    assert body["results"][0]["vlan"] == 40
+    assert body["results"][0]["test_type"] == "whoami"
+    assert body["results"][0]["ok"] is True
+
+    # the filters were parameterised into the query
+    sql, params = app.state.clickhouse.queries[0]
+    assert params["vlan"] == 40
+    assert params["test_type"] == "whoami"
+    assert params["hours"] == 6
