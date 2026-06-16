@@ -1,0 +1,113 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 0,
+  "schemaVersion": 39,
+  "tags": ["netmon", "probe"],
+  "templating": { "list": [] },
+  "time": { "from": "now-24h", "to": "now" },
+  "timezone": "",
+  "title": "Probe Results (on-demand)",
+  "uid": "netmon-probe-results",
+  "refresh": "1m",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Probes (selected range)",
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": 2,
+          "rawSql": "SELECT count() AS probes FROM netmon.probe_results WHERE $__timeFilter(timestamp)"
+        }
+      ],
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" } }, "overrides": [] }
+    },
+    {
+      "type": "stat",
+      "title": "Failure rate % (ok=0)",
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": 2,
+          "rawSql": "SELECT round(100 * countIf(ok = 0) / greatest(count(), 1), 1) AS failure_pct FROM netmon.probe_results WHERE $__timeFilter(timestamp)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 50 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Probe rate by vlan/test_type",
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": 1,
+          "rawSql": "SELECT toStartOfFiveMinute(timestamp) AS time, concat(toString(vlan), '/', test_type) AS metric, count() AS probes FROM netmon.probe_results WHERE $__timeFilter(timestamp) GROUP BY time, metric ORDER BY time"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "drawStyle": "bars", "stacking": { "mode": "normal" } } },
+        "overrides": []
+      }
+    },
+    {
+      "type": "table",
+      "title": "Egress identity per VLAN (whoami) — the parents'-Netflix view",
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": 2,
+          "rawSql": "SELECT vlan, any(vlan_name) AS vlan_name, argMax(egress_ip, timestamp) AS egress_ip, argMax(egress_asn, timestamp) AS asn, argMax(egress_country, timestamp) AS country, max(timestamp) AS last_seen FROM netmon.probe_results WHERE test_type = 'whoami' AND $__timeFilter(timestamp) GROUP BY vlan ORDER BY vlan"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "http_get latency by target (avg ms)",
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": 1,
+          "rawSql": "SELECT toStartOfFiveMinute(timestamp) AS time, target, avg(duration_ms) AS avg_latency_ms FROM netmon.probe_results WHERE test_type = 'http_get' AND $__timeFilter(timestamp) GROUP BY time, target ORDER BY time"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] }
+    },
+    {
+      "type": "table",
+      "title": "Failures by vlan/test_type/error",
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": 2,
+          "rawSql": "SELECT vlan, test_type, error, count() AS failures FROM netmon.probe_results WHERE ok = 0 AND $__timeFilter(timestamp) GROUP BY vlan, test_type, error ORDER BY failures DESC"
+        }
+      ]
+    }
+  ]
+}

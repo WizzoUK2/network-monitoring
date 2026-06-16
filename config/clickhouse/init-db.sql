@@ -208,3 +208,40 @@ CREATE TABLE IF NOT EXISTS netmon.correlated_events (
 PARTITION BY toYYYYMM(timestamp)
 ORDER BY (timestamp, rule_name, severity)
 TTL timestamp + INTERVAL 180 DAY;
+
+-- ==========================================================
+-- On-demand probe results (from the network-probe LXC).
+-- Written via the analyzer's POST /api/probe-results endpoint.
+-- One DB, one Grafana, two writers — the continuous collector and the probe.
+-- ==========================================================
+CREATE TABLE IF NOT EXISTS netmon.probe_results (
+    timestamp        DateTime DEFAULT now(),
+    probe_host       String,
+    probe_version    String,
+    vlan             UInt16,
+    vlan_name        String DEFAULT '',
+    test_type        String,            -- ping|dig|http_get|whoami|mtr|...
+    target           String,
+    duration_ms      UInt32,
+    ok               UInt8,             -- 1 = test ran, 0 = infra error
+    error            String DEFAULT '',
+    -- per-test fields; null = not applicable
+    rtt_min_ms       Nullable(Float32),
+    rtt_avg_ms       Nullable(Float32),
+    rtt_max_ms       Nullable(Float32),
+    loss_pct         Nullable(Float32),
+    status_code      Nullable(UInt16),
+    egress_ip        Nullable(String),
+    egress_asn       Nullable(UInt32),
+    egress_country   Nullable(String),
+    dns_rcode        Nullable(String),
+    dns_answers      Nullable(String),  -- JSON-encoded array
+    tls_subject      Nullable(String),
+    tls_issuer       Nullable(String),
+    -- full envelope payload for anything the columns don't cover
+    raw_result       String
+) ENGINE = MergeTree()
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (timestamp, vlan, test_type, target)
+TTL timestamp + INTERVAL 180 DAY
+SETTINGS index_granularity = 8192;

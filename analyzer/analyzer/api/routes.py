@@ -1,10 +1,26 @@
+import hmac
 import logging
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+
+from analyzer.config import settings
+from analyzer.models import PROBE_RESULTS_COLUMNS, ProbeResult
 
 router = APIRouter()
 logger = logging.getLogger("analyzer.api")
+
+
+def require_probe_token(request: Request) -> None:
+    """Bearer guard for the probe write endpoint (network-monitoring spec §6.3)."""
+    expected = settings.probe_ingest_token
+    if not expected:
+        raise HTTPException(
+            status_code=503, detail="probe ingest disabled (set PROBE_INGEST_TOKEN)"
+        )
+    scheme, _, token = request.headers.get("Authorization", "").partition(" ")
+    if scheme != "Bearer" or not hmac.compare_digest(token, expected):
+        raise HTTPException(status_code=401, detail="unauthorized")
 
 
 @router.get("/api/health")
@@ -204,3 +220,19 @@ async def stats_summary(request: Request):
     stats["dns_cache_size"] = dns_enricher.get_cache_size()
 
     return stats
+
+
+@router.post("/api/probe-results", dependencies=[Depends(require_probe_token)])
+async def post_probe_result(payload: ProbeResult, request: Request):
+    """Receive an on-demand probe result from the network-probe LXC.
+
+    Writes one row to netmon.probe_results, reusing the established clickhouse_connect
+    client (ch.insert — the first write path on the analyzer; reads use ch.query).
+    """
+    ch = request.app.state.clickhouse
+    ch.insert(
+        "probe_results",
+        [payload.to_clickhouse_row()],
+        column_names=PROBE_RESULTS_COLUMNS,
+    )
+    return {"status": "stored", "stored_at": datetime.now(tz=timezone.utc).isoformat()}
