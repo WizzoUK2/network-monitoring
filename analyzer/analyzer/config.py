@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     unifi_poll_interval: int = 60
     correlation_interval: int = 300
 
+    # Bearer token guarding the network-probe write endpoint (POST /api/probe-results).
+    # Empty = endpoint disabled (503). Set PROBE_INGEST_TOKEN to enable.
+    probe_ingest_token: str = ""
+
     model_config = {"env_prefix": "", "case_sensitive": False}
 
 

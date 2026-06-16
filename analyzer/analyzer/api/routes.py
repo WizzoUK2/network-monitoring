@@ -1,10 +1,26 @@
+import hmac
 import logging
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+
+from analyzer.config import settings
+from analyzer.models import PROBE_RESULTS_COLUMNS, ProbeResult
 
 router = APIRouter()
 logger = logging.getLogger("analyzer.api")
+
+
+def require_probe_token(request: Request) -> None:
+    """Bearer guard for the probe write endpoint (network-monitoring spec §6.3)."""
+    expected = settings.probe_ingest_token
+    if not expected:
+        raise HTTPException(
+            status_code=503, detail="probe ingest disabled (set PROBE_INGEST_TOKEN)"
+        )
+    scheme, _, token = request.headers.get("Authorization", "").partition(" ")
+    if scheme != "Bearer" or not hmac.compare_digest(token, expected):
+        raise HTTPException(status_code=401, detail="unauthorized")
 
 
 @router.get("/api/health")
@@ -94,7 +110,9 @@ async def top_talkers(request: Request, minutes: int = 60, limit: int = 20):
                 "src_addr": src,
                 "src_name": src_info.get("name", src) if src_info else src,
                 "dst_addr": dst,
-                "dst_name": dst_info.get("name", dst) if dst_info else dns_enricher.lookup(dst) or dst,
+                "dst_name": dst_info.get("name", dst)
+                if dst_info
+                else dns_enricher.lookup(dst) or dst,
                 "total_bytes": total_bytes,
                 "total_packets": total_packets,
                 "flow_count": flow_count,
@@ -204,3 +222,84 @@ async def stats_summary(request: Request):
     stats["dns_cache_size"] = dns_enricher.get_cache_size()
 
     return stats
+
+
+@router.post("/api/probe-results", dependencies=[Depends(require_probe_token)])
+async def post_probe_result(payload: ProbeResult, request: Request):
+    """Receive an on-demand probe result from the network-probe LXC.
+
+    Writes one row to netmon.probe_results, reusing the established clickhouse_connect
+    client (ch.insert — the first write path on the analyzer; reads use ch.query).
+    """
+    ch = request.app.state.clickhouse
+    ch.insert(
+        "probe_results",
+        [payload.to_clickhouse_row()],
+        column_names=PROBE_RESULTS_COLUMNS,
+    )
+    return {"status": "stored", "stored_at": datetime.now(tz=timezone.utc).isoformat()}
+
+
+@router.get("/api/probe-results")
+async def get_probe_results(
+    request: Request,
+    vlan: int | None = None,
+    test_type: str | None = None,
+    target: str | None = None,
+    hours: int = 24,
+    limit: int = 100,
+):
+    """Probe history for the Investigation Agent (network-probe get_probe_history).
+
+    Filters are optional; results are newest-first. The filter clauses are static
+    strings — only values are parameterised, so there is no SQL injection surface.
+    """
+    ch = request.app.state.clickhouse
+
+    conditions = ["timestamp >= now() - INTERVAL %(hours)s HOUR"]
+    params: dict = {"hours": hours, "limit": limit}
+    if vlan is not None:
+        conditions.append("vlan = %(vlan)s")
+        params["vlan"] = vlan
+    if test_type:
+        conditions.append("test_type = %(test_type)s")
+        params["test_type"] = test_type
+    if target:
+        conditions.append("target = %(target)s")
+        params["target"] = target
+    where = " AND ".join(conditions)
+
+    try:
+        rows = ch.query(
+            f"""
+            SELECT timestamp, probe_host, vlan, vlan_name, test_type, target,
+                   duration_ms, ok, error, raw_result
+            FROM probe_results
+            WHERE {where}
+            ORDER BY timestamp DESC
+            LIMIT %(limit)s
+            """,
+            parameters=params,
+        )
+    except Exception as e:
+        logger.error("Failed to query probe_results: %s", e)
+        return {"results": [], "count": 0, "error": str(e)}
+
+    results = []
+    for row in rows.result_rows:
+        ts, host, vlan_id, vlan_name, ttype, tgt, dur, ok, err, raw = row
+        results.append(
+            {
+                "timestamp": ts.isoformat(),
+                "probe_host": host,
+                "vlan": vlan_id,
+                "vlan_name": vlan_name,
+                "test_type": ttype,
+                "target": tgt,
+                "duration_ms": dur,
+                "ok": bool(ok),
+                "error": err,
+                "raw_result": raw,
+            }
+        )
+    return {"results": results, "count": len(results)}
