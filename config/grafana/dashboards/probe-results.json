@@ -108,6 +108,44 @@
           "rawSql": "SELECT vlan, test_type, error, count() AS failures FROM netmon.probe_results WHERE ok = 0 AND $__timeFilter(timestamp) GROUP BY vlan, test_type, error ORDER BY failures DESC"
         }
       ]
+    },
+    {
+      "type": "stat",
+      "title": "DNS resolver disagreements",
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 20 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": 2,
+          "rawSql": "SELECT countIf(JSONExtractBool(raw_result, 'agree') = 0) AS disagreements FROM netmon.probe_results WHERE test_type = 'dns_propagation' AND ok = 1 AND $__timeFilter(timestamp)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "table",
+      "title": "DNS propagation — per-probe resolver agreement",
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "gridPos": { "h": 8, "w": 18, "x": 6, "y": 20 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": 2,
+          "rawSql": "SELECT timestamp, vlan, target, JSONExtractBool(raw_result, 'agree') AS agree, raw_result AS resolvers FROM netmon.probe_results WHERE test_type = 'dns_propagation' AND ok = 1 AND $__timeFilter(timestamp) ORDER BY timestamp DESC LIMIT 100"
+        }
+      ]
     }
   ]
 }
