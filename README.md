@@ -1,4 +1,10 @@
-# Network Monitoring Platform
+# network-observability
+
+> Renamed from **network-monitoring** (2026-06) to fit the `network-*` tooling family and
+> make its role explicit: **network-observability** is the *passive* monitoring layer
+> (flows/logs/metrics/dashboards/alerts), alongside **network-inventory** (declarative
+> source-of-truth: device config/inventory → NetBox + git; formerly `wicked-collector`) and
+> **network-probe** (active on-demand probing). GitHub redirects the old URL.
 
 A self-hosted, Docker Compose-based platform for diagnosing network connectivity and bandwidth issues. Aggregates and correlates syslog, NetFlow/IPFIX, and packet capture data from UniFi devices and other network equipment, with built-in anomaly detection and enrichment.
 
